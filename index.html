@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hajin: Mayhem — Campaign Prototype</title>
+  <style>
+    * { box-sizing: border-box }
+    body { margin: 0; overflow: hidden; background: #101820; color: white; font: 15px Arial, sans-serif }
+    canvas { display: block }
+    #hud { position: fixed; inset: 0; pointer-events: none; text-shadow: 0 2px 4px #000 }
+    #mission, #objective { position: absolute; left: 18px }
+    #mission { top: 16px; font-size: 17px; font-weight: bold; letter-spacing: 1px }
+    #objective { top: 44px; max-width: 430px; line-height: 1.4; color: #c8e8f4 }
+    #stats { position: absolute; right: 18px; top: 16px; text-align: right; line-height: 1.6 }
+    #health { color: #79f4a1 }
+    #ammo { color: #ffe28a }
+    #crosshair {
+      position: absolute; top: 50%; left: 50%; width: 18px; height: 18px;
+      transform: translate(-50%, -50%)
+    }
+    #crosshair::before, #crosshair::after {
+      content: ""; position: absolute; background: white; box-shadow: 0 0 5px #4deaff
+    }
+    #crosshair::before { width: 2px; height: 18px; left: 8px }
+    #crosshair::after { width: 18px; height: 2px; top: 8px }
+    #toast { position: absolute; bottom: 13%; left: 50%; transform: translateX(-50%); font-weight: bold }
+    #hurt {
+      position: fixed; inset: 0; pointer-events: none; opacity: 0;
+      background: radial-gradient(transparent 45%, rgba(210, 0, 0, .6));
+      transition: opacity .12s
+    }
+    #overlay {
+      position: fixed; inset: 0; z-index: 4; display: grid; place-items: center;
+      background: rgba(3, 8, 13, .84)
+    }
+    #panel {
+      width: min(680px, calc(100% - 32px)); padding: 26px;
+      background: rgba(10, 20, 29, .97); border: 1px solid #55d8ee;
+      box-shadow: 0 0 30px #167d9438
+    }
+    #panel h1 { margin: 0 0 8px; color: #71edff; letter-spacing: 2px }
+    #panel h2 { margin: 0 0 16px; color: #bedbe4; font-size: 17px; font-weight: normal }
+    #panel p { line-height: 1.55; color: #e2edf0 }
+    #panel button {
+      margin-top: 12px; border: 0; padding: 12px 20px; cursor: pointer;
+      background: #71edff; color: #07151a; font-weight: bold
+    }
+    #panel button:hover { background: white }
+    .small { color: #b6d2dc; font-size: 13px }
+  </style>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.169.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.169.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="hud">
+    <div id="mission"></div>
+    <div id="objective"></div>
+    <div id="stats">
+      <div id="health">HEALTH: 100</div>
+      <div id="ammo">AMMO: 30 / 120</div>
+      <div id="enemyCount"></div>
+    </div>
+    <div id="crosshair"></div>
+    <div id="toast"></div>
+  </div>
+  <div id="hurt"></div>
+  <div id="overlay"></div>
+
+  <script type="module">
+    import * as THREE from "three";
+    import { PointerLockControls } from "three/addons/controls/PointerLockControls.js";
+
+    // Original browser-game prototype inspired by cinematic military FPS campaigns.
+    const chapters = [
+      {
+        title: "Mayhem", subtitle: "Jae-Woo's Squad — Hajin City",
+        story: "Private Min Jae-Woo is patrolling Hajin with Lieutenant Carter Reed's joint squad when the power fails. Explosions erupt across the skyline; enemy paratroopers descend on the stadium.",
+        objective: "Clear the stadium approach, then destroy the fuel truck blocking the defensive-wall breach.",
+        count: 5, truck: true, color: 0x33404a
+      },
+      {
+        title: "Out in the Cold", subtitle: "Cross — Five Days Before the Invasion",
+        story: "Sarah Mercer recruits Ethan Cross to find Viktor Dragunov. Cross tracks financier Elena Volkov through a New York nightclub, then follows Viktor into the snow.",
+        objective: "Fight through the guards and reach the extraction point.",
+        count: 6, color: 0x283747
+      },
+      {
+        title: "Following Orders", subtitle: "North Korea",
+        story: "A North Korean soldier and Kang Tae-Sung search a border village for a defector. General Seo Ji-Yeon orders the execution. Tae-Sung's faith in the regime begins to fracture.",
+        objective: "Reach the village exit. The story outcome is the same whichever choice the soldier makes.",
+        count: 4, color: 0x4b493c
+      },
+      {
+        title: "Hired Gun", subtitle: "Cross — Four Days Before the Invasion",
+        story: "Cross helps Sofia Navarro transport a mysterious package toward Paris. Shadow Company commander Marcus Kane is pursuing them.",
+        objective: "Fight through the route and reach the maintenance-yard exit.",
+        count: 7, color: 0x474044
+      },
+      {
+        title: "Losing Ground", subtitle: "Jae-Woo's Squad — Hajin",
+        story: "The invasion intensifies. Jae-Woo's squad fights through collapsing streets as the surprise attack becomes a battle for survival.",
+        objective: "Clear the street and reach the allied position.",
+        count: 7, color: 0x493a36
+      },
+      {
+        title: "Traffic", subtitle: "Cross — Three Days Before the Invasion",
+        story: "Cross and Sofia cross Paris amid a violent meeting and a running battle. Cross wants Alexander Volkov; Sofia is still keeping secrets.",
+        objective: "Push through the street and reach the rendezvous.",
+        count: 6, color: 0x4b4540
+      },
+      {
+        title: "Gone Dark", subtitle: "Cross and Brooks — Two Days Before the Invasion",
+        story: "In Mumbai, the package exchange is revealed as a trap. The Archer's forces capture Cross, Liam Brooks, and Specter. Sofia is killed.",
+        objective: "Fight through the ambush zone and reach the rally point.",
+        count: 8, color: 0x514337
+      },
+      {
+        title: "Assassins", subtitle: "North Korea — One Day Before the Invasion",
+        story: "General Seo Ji-Yeon launches a coup against Chairman Seo Min-Ho. Loyalists and coup forces clash through guarded government compounds.",
+        objective: "Advance through the compound to the exit.",
+        count: 8, color: 0x3c3c49
+      },
+      {
+        title: "Survivors", subtitle: "Jae-Woo's Squad — Frozen Wilderness",
+        story: "After an aircraft crash, Jae-Woo's squad is stranded in North Korea. Kang Tae-Sung chooses to help them evade enemy patrols.",
+        objective: "Survive the patrol and reach the next shelter.",
+        count: 5, color: 0x647783
+      },
+      {
+        title: "Stranded", subtitle: "Jae-Woo's Squad — Hostile Territory",
+        story: "The squad scavenges supplies and crosses frozen terrain, searching for a route back to allied lines.",
+        objective: "Clear the patrol and reach the route marker.",
+        count: 5, color: 0x71818a
+      },
+      {
+        title: "Defection", subtitle: "Jae-Woo's Squad — Enemy Territory",
+        story: "Tae-Sung commits to abandoning the regime. His knowledge of enemy operations helps Jae-Woo's squad move toward allied forces.",
+        objective: "Clear the route and reach friendly lines.",
+        count: 6, color: 0x53624f
+      },
+      {
+        title: "Counter Attack", subtitle: "Jae-Woo's Squad — Hajin Outskirts",
+        story: "South Korean forces launch a counteroffensive. Jae-Woo advances with allied troops to reclaim lost ground.",
+        objective: "Clear the defensive position and advance.",
+        count: 8, color: 0x51403a
+      },
+      {
+        title: "Escape", subtitle: "Cross — Volkov's Prison",
+        story: "Cross is imprisoned by Alexander Volkov's forces. Specter and Brooks race to prevent the Archer from consolidating power.",
+        objective: "Break through the guards and reach the escape route.",
+        count: 6, color: 0x3e4650
+      },
+      {
+        title: "Entrenched", subtitle: "Jae-Woo's Squad — Hajin Power Plant",
+        story: "A failing reactor threatens catastrophe. Jae-Woo's unit fights toward the controls that can flood the reactor chamber.",
+        objective: "Clear the power-plant approach and reach the control point.",
+        count: 8, color: 0x42494a
+      },
+      {
+        title: "Decapitation", subtitle: "Jae-Woo's Squad — Palace Bunker",
+        story: "Allied forces assault Ji-Yeon's palace and command bunker. Jae-Woo's squad fights through elite defenders to end the coup leader's control.",
+        objective: "Fight through the defenders and reach the bunker.",
+        count: 9, color: 0x453c48
+      },
+      {
+        title: "Greater Good", subtitle: "Cross — The Archer's Last Stand",
+        story: "The Archer is revealed as Alexander Volkov, a Russian defence minister tied to Konni and Viktor Dragunov. After the convoy crash, Cross confronts Volkov on a frozen lake.",
+        objective: "Defeat Volkov and complete the campaign.",
+        count: 1, boss: true, color: 0x71838a
+      }
+    ];
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x121b23);
+    scene.fog = new THREE.Fog(0x121b23, 28, 100);
+
+    const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.1, 150);
+    camera.position.set(0, 1.7, 14);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    document.body.appendChild(renderer.domElement);
+
+    const controls = new PointerLockControls(camera, document.body);
+    scene.add(new THREE.HemisphereLight(0xc5e4f5, 0x252b31, 1.65));
+    const keyLight = new THREE.DirectionalLight(0xd4e8f4, 2.0);
+    keyLight.position.set(-12, 22, 8);
+    keyLight.castShadow = true;
+    scene.add(keyLight);
+
+    const world = new THREE.Group();
+    scene.add(world);
+
+    const ui = {
+      overlay: document.getElementById("overlay"),
+      mission: document.getElementById("mission"),
+      objective: document.getElementById("objective"),
+      health: document.getElementById("health"),
+      ammo: document.getElementById("ammo"),
+      enemyCount: document.getElementById("enemyCount"),
+      toast: document.getElementById("toast"),
+      hurt: document.getElementById("hurt")
+    };
+
+    let chapterIndex = 0;
+    let enemies = [];
+    let obstacles = [];
+    let truck = null;
+    let exitMarker = null;
+    let phase = "briefing";
+    let health = 100;
+    let magazine = 30;
+    let reserve = 120;
+    let reloading = false;
+    let lastShot = 0;
+    let lastDamage = 0;
+    let toastTimer = 0;
+    const keys = {};
+    const raycaster = new THREE.Raycaster();
+    const clock = new THREE.Clock();
+
+    function overlay(title, subtitle, text, buttonText, onClick) {
+      ui.overlay.innerHTML = `
+        <div id="panel">
+          <h1>${title}</h1>
+          <h2>${subtitle || ""}</h2>
+          <p>${text}</p>
+          <p class="small">WASD move · Mouse aim · Left-click fire · R reload · Shift sprint · Esc pause</p>
+          <button id="panelButton">${buttonText}</button>
+        </div>`;
+      ui.overlay.style.display = "grid";
+      document.getElementById("panelButton").onclick = onClick;
+    }
+
+    function showToast(text, seconds = 1.7) {
+      ui.toast.textContent = text;
+      toastTimer = seconds;
+    }
+
+    function updateHUD() {
+      ui.health.textContent = `HEALTH: ${Math.max(0, Math.ceil(health))}`;
+      ui.health.style.color = health < 30 ? "#ff7777" : "#79f4a1";
+      ui.ammo.textContent = reloading ? "RELOADING…" : `AMMO: ${magazine} / ${reserve}`;
+      const alive = enemies.filter(e => e.userData.alive).length;
+      ui.enemyCount.textContent = `HOSTILES: ${alive}`;
+    }
+
+    function addBox(x, y, z, w, h, d, color, collide = false) {
+      const mesh = new THREE.Mesh(
+        new THREE.BoxGeometry(w, h, d),
+        new THREE.MeshStandardMaterial({ color, roughness: 0.88 })
+      );
+      mesh.position.set(x, y, z);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      world.add(mesh);
+      if (collide) obstacles.push({ x, z, w, d });
+      return mesh;
+    }
+
+    function createEnemy(x, z, boss = false) {
+      const enemy = new THREE.Group();
+      enemy.position.set(x, 0, z);
+      const color = boss ? 0x5a2730 : 0x80614a;
+      const body = new THREE.Mesh(
+        new THREE.CapsuleGeometry(boss ? 0.62 : 0.42, boss ? 1.7 : 1.35, 4, 8),
+        new THREE.MeshStandardMaterial({ color, roughness: 0.9 })
+      );
+      body.position.y = boss ? 1.05 : 0.9;
+      body.castShadow = true;
+      enemy.add(body);
+
+      const head = new THREE.Mesh(
+        new THREE.SphereGeometry(boss ? 0.34 : 0.27, 12, 10),
+        new THREE.MeshStandardMaterial({ color: 0xb88e70, roughness: 1 })
+      );
+      head.position.y = boss ? 2.0 : 1.75;
+      enemy.add(head);
+
+      const weapon = new THREE.Mesh(
+        new THREE.BoxGeometry(0.13, 0.14, 0.75),
+        new THREE.MeshStandardMaterial({ color: 0x15191c, metalness: 0.45, roughness: 0.6 })
+      );
+      weapon.position.set(0.42, 1.15, 0.25);
+      enemy.add(weapon);
+
+      enemy.userData = {
+        alive: true,
+        health: boss ? 500 : 100,
+        boss,
+        speed: boss ? 1.3 : 1.7 + Math.random() * 0.5,
+        cooldown: 0.8 + Math.random() * 1.6,
+        attackRange: 24
+      };
+      for (const child of enemy.children) child.userData.enemy = enemy;
+      world.add(enemy);
+      enemies.push(enemy);
+    }
+
+    function buildChapter(index) {
+      world.clear();
+      enemies = [];
+      obstacles = [];
+      truck = null;
+      exitMarker = null;
+      const chapter = chapters[index];
+      camera.position.set(0, 1.7, 14);
+      health = 100;
+      magazine = 30;
+      reserve = 120;
+      reloading = false;
+      phase = "playing";
+      scene.background = new THREE.Color(chapter.color);
+      scene.fog.color.setHex(chapter.color);
+
+      const ground = new THREE.Mesh(
+        new THREE.PlaneGeometry(38, 100),
+        new THREE.MeshStandardMaterial({ color: index === 8 || index === 9 || index === 15 ? 0xb9c4c6 : 0x343a3e, roughness: 1 })
+      );
+      ground.rotation.x = -Math.PI / 2;
+      ground.position.z = -34;
+      ground.receiveShadow = true;
+      world.add(ground);
+
+      const road = new THREE.Mesh(
+        new THREE.PlaneGeometry(12, 100),
+        new THREE.MeshStandardMaterial({ color: 0x1b2227, roughness: 1 })
+      );
+      road.rotation.x = -Math.PI / 2;
+      road.position.set(0, 0.025, -34);
+      world.add(road);
+
+      // Procedural city / compound / route walls
+      for (let z = 10; z > -72; z -= 12) {
+        for (const side of [-1, 1]) {
+          const width = 4 + Math.random() * 3;
+          const height = 7 + Math.random() * 12;
+          const building = addBox(
+            side * (8.5 + width / 2), height / 2, z,
+            width, height, 9,
+            new THREE.Color(chapter.color).multiplyScalar(0.72).getHex()
+          );
+          // Dim windows on the street-facing wall
+          const windowMat = new THREE.MeshBasicMaterial({ color: Math.random() > 0.55 ? 0x8e9ba0 : 0x26343b });
+          for (let row = 0; row < Math.floor(height / 3); row++) {
+            const win = new THREE.Mesh(new THREE.PlaneGeometry(0.65, 0.9), windowMat);
+            win.position.set(building.position.x - side * (width / 2 + 0.015), 2 + row * 2.5, z + 2.2);
+            win.rotation.y = side > 0 ? -Math.PI / 2 : Math.PI / 2;
+            world.add(win);
+          }
+        }
+      }
+
+      // Cover objects
+      for (let i = 0; i < 7; i++) {
+        const x = (i % 2 ? 1 : -1) * (3.3 + Math.random() * 1.5);
+        const z = -5 - i * 8;
+        addBox(x, 0.7, z, 2.3, 1.4, 1.6, 0x4e5659, true);
+      }
+
+      // Extraction marker
+      const ring = new THREE.Mesh(
+        new THREE.TorusGeometry(1.6, 0.09, 8, 32),
+        new THREE.MeshBasicMaterial({ color: 0x63f1ff })
+      );
+      ring.rotation.x = Math.PI / 2;
+      ring.position.set(0, 0.18, -62);
+      world.add(ring);
+      const beam = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.08, 0.8, 4, 16, 1, true),
+        new THREE.MeshBasicMaterial({ color: 0x39dff7, transparent: true, opacity: 0.18, side: THREE.DoubleSide })
+      );
+      beam.position.set(0, 2, -62);
+      world.add(beam);
+      exitMarker = { x: 0, z: -62 };
+
+      // Mission 1's fuel truck is the special final objective.
+      if (index === 0) {
+        const truckGroup = new THREE.Group();
+        const tank = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.9, 0.9, 4.7, 16),
+          new THREE.MeshStandardMaterial({ color: 0x8e3d2c, metalness: 0.2, roughness: 0.7 })
+        );
+        tank.rotation.x = Math.PI / 2;
+        tank.position.set(0, 1.35, -53);
+        truckGroup.add(tank);
+        const cab = new THREE.Mesh(
+          new THREE.BoxGeometry(2.2, 1.5, 1.8),
+          new THREE.MeshStandardMaterial({ color: 0x454a4b, metalness: 0.25 })
+        );
+        cab.position.set(0, 1.05, -49.8);
+        truckGroup.add(cab);
+        const chassis = new THREE.Mesh(
+          new THREE.BoxGeometry(2.4, 0.35, 6),
+          new THREE.MeshStandardMaterial({ color: 0x22272a })
+        );
+        chassis.position.set(0, 0.45, -52);
+        truckGroup.add(chassis);
+        truckGroup.userData.health = 100;
+        truckGroup.userData.destroyed = false;
+        for (const child of truckGroup.children) child.userData.truck = truckGroup;
+        world.add(truckGroup);
+        truck = truckGroup;
+      }
+
+      const count = chapter.count;
+      for (let i = 0; i < count; i++) {
+        const x = (Math.random() * 8 - 4);
+        const z = -7 - Math.random() * 38;
+        createEnemy(x, z, chapter.boss && i === 0);
+      }
+
+      ui.mission.textContent = `${String(index + 1).padStart(2, "0")} / 16 — ${chapter.title.toUpperCase()}`;
+      ui.objective.textContent = chapter.objective;
+      updateHUD();
+    }
+
+    function beginChapter() {
+      buildChapter(chapterIndex);
+      controls.lock();
+    }
+
+    function completeChapter() {
+      if (phase !== "playing") return;
+      phase = "complete";
+      controls.unlock();
+
+      if (chapterIndex === chapters.length - 1) {
+        overlay("Campaign Complete", "Greater Good",
+          "Cross defeats Volkov on the frozen lake, but his injuries prove fatal. Specter reaches him in his final moments. The conspiracy is stopped, and the original team is gone.",
+          "PLAY AGAIN", () => {
+            chapterIndex = 0;
+            showBriefing();
+          });
+      } else {
+        const next = chapters[chapterIndex + 1];
+        overlay("Mission Complete", chapters[chapterIndex].title,
+          `The mission is over. Next: <b>${next.title}</b> — ${next.subtitle}.`,
+          "NEXT MISSION", () => {
+            chapterIndex++;
+            showBriefing();
+          });
+      }
+    }
+
+    function showBriefing() {
+      phase = "briefing";
+      const ch = chapters[chapterIndex];
+      overlay(`${String(chapterIndex + 1).padStart(2, "0")} — ${ch.title}`, ch.subtitle,
+        `${ch.story}<br><br><b>Objective:</b> ${ch.objective}`,
+        "START MISSION", beginChapter);
+    }
+
+    function reload() {
+      if (phase !== "playing" || reloading || magazine === 30 || reserve <= 0) return;
+      reloading = true;
+      updateHUD();
+      setTimeout(() => {
+        if (phase !== "playing") return;
+        const amount = Math.min(30 - magazine, reserve);
+        magazine += amount;
+        reserve -= amount;
+        reloading = false;
+        updateHUD();
+        showToast("RELOADED", 1);
+      }, 1200);
+    }
+
+    function shoot() {
+      if (!controls.isLocked || phase !== "playing" || reloading) return;
+      const now = performance.now();
+      if (now - lastShot < 130) return;
+      lastShot = now;
+
+      if (magazine <= 0) {
+        showToast("PRESS R TO RELOAD", 0.7);
+        return;
+      }
+      magazine--;
+      updateHUD();
+
+      raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+      const objects = enemies.filter(e => e.userData.alive);
+      if (truck && !truck.userData.destroyed && enemies.every(e => !e.userData.alive)) {
+        objects.push(truck);
+      }
+
+      const hits = raycaster.intersectObjects(objects, true);
+      if (!hits.length || hits[0].distance > 65) return;
+
+      const obj = hits[0].object;
+      const targetEnemy = obj.userData.enemy;
+      const targetTruck = obj.userData.truck;
+
+      if (targetEnemy && targetEnemy.userData.alive) {
+        targetEnemy.userData.health -= targetEnemy.userData.boss ? 50 : 100;
+        if (targetEnemy.userData.health <= 0) {
+          targetEnemy.userData.alive = false;
+          targetEnemy.visible = false;
+          showToast(targetEnemy.userData.boss ? "VOLKOV ELIMINATED" : "HOSTILE DOWN");
+        } else {
+          showToast("HIT");
+        }
+      } else if (targetTruck && !targetTruck.userData.destroyed) {
+        targetTruck.userData.health -= 25;
+        if (targetTruck.userData.health <= 0) {
+          targetTruck.userData.destroyed = true;
+          targetTruck.visible = false;
+          showToast("FUEL TRUCK DESTROYED");
+        } else {
+          showToast("TRUCK DAMAGED");
+        }
+      }
+      updateHUD();
+    }
+
+    function damagePlayer(amount) {
+      if (phase !== "playing") return;
+      health -= amount;
+      lastDamage = performance.now();
+      ui.hurt.style.opacity = "1";
+      setTimeout(() => ui.hurt.style.opacity = "0", 180);
+      updateHUD();
+      if (health <= 0) {
+        phase = "dead";
+        controls.unlock();
+        overlay("Squad Down", chapters[chapterIndex].title,
+          "Jae-Woo's team has been overwhelmed. Retry this mission and try using cover, sprinting, and reloading before contact.",
+          "RETRY MISSION", () => {
+            buildChapter(chapterIndex);
+            controls.lock();
+          });
+      }
+    }
+
+    function updateEnemies(delta) {
+      if (phase !== "playing") return;
+      for (const enemy of enemies) {
+        if (!enemy.userData.alive) continue;
+        const dx = camera.position.x - enemy.position.x;
+        const dz = camera.position.z - enemy.position.z;
+        const distance = Math.hypot(dx, dz);
+        enemy.rotation.y = Math.atan2(dx, dz);
+
+        if (distance > 6) {
+          const step = Math.min(enemy.userData.speed * delta, distance - 5);
+          enemy.position.x += (dx / distance) * step;
+          enemy.position.z += (dz / distance) * step;
+        }
+
+        enemy.userData.cooldown -= delta;
+        if (distance < enemy.userData.attackRange && enemy.userData.cooldown <= 0) {
+          enemy.userData.cooldown = enemy.userData.boss ? 0.8 : 1.25 + Math.random() * 0.8;
+          // Prototype enemy fire is abstracted as incoming damage at range.
+          if (Math.random() < (enemy.userData.boss ? 0.65 : 0.38)) {
+            damagePlayer(enemy.userData.boss ? 12 : 7);
+          }
+        }
+      }
+      updateHUD();
+    }
+
+    function updatePlayer(delta) {
+      if (!controls.isLocked || phase !== "playing") return;
+      const speed = keys.ShiftLeft || keys.ShiftRight ? 9 : 5.5;
+      const forward = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0);
+      const side = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0);
+      const norm = Math.hypot(forward, side) || 1;
+      controls.moveForward((forward / norm) * speed * delta);
+      controls.moveRight((side / norm) * speed * delta);
+
+      camera.position.y = 1.7;
+      camera.position.x = THREE.MathUtils.clamp(camera.position.x, -6.2, 6.2);
+      camera.position.z = THREE.MathUtils.clamp(camera.position.z, -68, 16);
+
+      // Simple collision against cover.
+      for (const box of obstacles) {
+        if (Math.abs(camera.position.x - box.x) < box.w / 2 + 0.45 &&
+            Math.abs(camera.position.z - box.z) < box.d / 2 + 0.45) {
+          controls.moveForward(-(forward / norm) * speed * delta);
+          controls.moveRight(-(side / norm) * speed * delta);
+          break;
+        }
+      }
+    }
+
+    function updateObjectives() {
+      if (phase !== "playing") return;
+      const allDead = enemies.every(e => !e.userData.alive);
+
+      if (chapterIndex === 0 && truck && allDead && !truck.userData.destroyed) {
+        ui.objective.textContent = "Objective: Stadium is clear. Aim at the fuel truck and fire until it is destroyed.";
+      } else if (allDead && chapterIndex !== 0) {
+        ui.objective.textContent = "Objective: Area clear. Move to the glowing extraction marker.";
+      }
+
+      if (chapterIndex === 0 && truck?.userData.destroyed) {
+        completeChapter();
+        return;
+      }
+
+      if (allDead && chapterIndex !== 0) {
+        const distance = Math.hypot(camera.position.x - exitMarker.x, camera.position.z - exitMarker.z);
+        if (distance < 3.2) completeChapter();
+      }
+
+      if (chapterIndex === 0 && allDead && truck?.userData.destroyed) completeChapter();
+    }
+
+    document.addEventListener("keydown", event => {
+      keys[event.code] = true;
+      if (event.code === "KeyR") reload();
+    });
+    document.addEventListener("keyup", event => { keys[event.code] = false; });
+    document.addEventListener("mousedown", event => {
+      if (event.button === 0) shoot();
+    });
+
+    controls.addEventListener("lock", () => {
+      ui.overlay.style.display = "none";
+      if (phase === "briefing") phase = "playing";
+      if (chapterIndex === 0 && camera.position.z > 10) {
+        ui.objective.textContent = "Objective: Fight through the stadium approach. Eliminate hostiles.";
+      }
+    });
+    controls.addEventListener("unlock", () => {
+      if (phase === "playing") {
+        overlay("Paused", chapters[chapterIndex].title,
+          "Mission paused. Resume when you are ready.",
+          "RESUME", () => controls.lock());
+      }
+    });
+
+    function animate() {
+      requestAnimationFrame(animate);
+      const delta = Math.min(clock.getDelta(), 0.05);
+      updatePlayer(delta);
+      updateEnemies(delta);
+      updateObjectives();
+
+      if (toastTimer > 0) {
+        toastTimer -= delta;
+        if (toastTimer <= 0) ui.toast.textContent = "";
+      }
+      renderer.render(scene, camera);
+    }
+
+    addEventListener("resize", () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+
+    showBriefing();
+    animate();
+  </script>
+</body>
+</html>
